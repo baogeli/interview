@@ -1,0 +1,39 @@
+
+
+sync包
+    Mutex 互斥锁
+    RWMutex 读写锁
+    WaitGroup 并发等待组
+    Map 并发安全字典
+    Once 单例模式
+    Cond 同步等待条件
+    Pool 临时对象池
+
+    1.Mutex
+        保证在同一时间段内有且仅有一个goroutine持有锁
+        这就保证了在某一时间段内有且仅有一个goroutine访问共享资源，其他申请锁的goroutine将会被阻塞直到锁被释放
+
+    2.RWMutex
+        1)在同一个时间段只能有一个goroutine获取到写锁
+        2)在同一时间段可以有多个goroutine获取到读锁
+        3)在同一时间段只能存在写锁或读锁(读锁和写锁互斥)
+
+    3.WaitGroup
+        var wg sync.WaitGroup
+        wg.add(int)
+        wg.done()
+        wg.wait()
+
+    4.Map
+        go语言中原生的Map并不是并发安全的，在多个goroutine同时往Map中添加数据时，可能会导致部门添加数据的丢失
+
+        1)func(m *Map)Load(key interface{})(value interface{}, ok bool)
+            根据k获取value，相当于get
+        2)func(m *Map)Store(key,value interface{})
+            存储，相当于set
+        3)func (m *Map)LoadorStore(key, value interface{})(actual interfacel}, loaded bool)
+            如果key存在则返回key的value，如果key不存在则设置key-value对
+        4)func(m *Map)Delete(key interface{})
+            删除一个key
+        5)func(m *Map)Range(f func(key,value interface{}) bool)
+            无序遍历map

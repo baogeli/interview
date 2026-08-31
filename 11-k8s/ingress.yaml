@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-ingress
+spec:
+  ingressClassName: nginx      # 指定 Ingress Controller（minikube 启用 ingress 后名为 nginx）
+  rules:
+  - host: web.example.com      # 访问域名
+    http:
+      paths:
+      - path: /
+        pathType: Prefix       # 前缀匹配，/ 表示匹配所有路径
+        backend:
+          service:
+            name: web-svc      # 转发到上面的 Service
+            port:
+              number: 80

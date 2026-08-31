@@ -1,0 +1,161 @@
+
+
+概念
+一、架构与组件
+K8s 由哪些核心组件组成？各自职责？
+    控制平面：API Server（唯一入口 / etcd 唯一读写方）、etcd（状态存储）、Scheduler（调度）、Controller-Manager（控制器循环）。
+    节点：kubelet（管理本节点 Pod）、kube-proxy（网络规则）、容器运行时（containerd / docker）。
+为什么说所有组件都是 API Server 的客户端？
+    只有 API Server 直连 etcd，其它组件都通过它通信；这是解耦和鉴权统一的基础。
+Pod 和容器的关系？
+    Pod 是最小调度单位，包含一个或多个共享 network/pid/volume 命名空间的容器；通常一个 Pod 跑一个主容器 + 可能的 sidecar。，
+
+
+笔记
+    控制平面  类似于大脑，负责决策，调度到哪，用不用重启，状态对不对
+    1. API Server 统一入口
+    2. Scheduler 调度器 决定新容器放到哪台机器上
+    3. Controller 监工，不停的对比现状和目标，有差错就纠正
+    4. etcd 存着所有状态数据
+
+    node是节点，真正把容器跑起来的地方
+    1. 每一个节点上都有一个 kubelet (核心代理组件，控制平面与工作节点交互)，节点注册与状态上报，pod生命周期
+
+    pod
+    1. k8s管理的最小单位， 一个pod可运行多个容器并共享网络和存储，以pod为最小单位因为方便 调度，扩缩，重启的统一单位,pod的每次重见ip都会变
+    2. 一个pod中如果有多个容器，可共享同一个ip，挂载的存储，网络空间
+    3. pod是临时对象，通常由Deployment管理，Service 提供稳定访问入口, Probe 保证容器已就绪, Resource 控制资源使用
+    4. pod的核心知识点速记
+        a. 最小调度单位
+        b. 多容器运行
+        c. 共享网络和存储
+        d. 临时对象
+        e. 独立ip
+        f. 临时对象
+        *********
+        g. 交给Deployment管理
+        h. Service 提供稳定访问入口
+        i. Probe 保证容器已就绪
+        j. Resource 控制资源使用
+
+
+    Deployment replicas: 3  告诉k8s我要3个这样的pod
+    1. pod的管理员，通过 ReplicaSet 管理 pod，数量由replicas来控制
+    2. kubectl apply -f deploy.yaml  --- k8s会启3个pod
+    3. 想创建3个web应用，不要创建3个pod.yaml，而是创建1个deployment.yaml, 声明3个web应用
+    4. Deployment -> ReplicaSet -> pod
+
+    Service 稳定入口
+    0. k8s中负责网络访问的核心资源，通过label标签找到对应的 pod
+    1. (假设一组pod里有pod1,pod2,pod3)给一组pod提供一个稳定不变的入口，前端只认一个地址，后端pod随便换，完全解偶
+    2. 自动把请求分发给健康的Pod，负载均衡
+    3. 集群内部访问用clusterIP，外部访问用 NodePort
+    ****
+    如何关联的 selector 用来选择哪些 pod
+    Pod                         Service
+    labels:                     selector:
+    app: payment                app: payment
+    ****
+    工作流程: 用户只关心service地址，不用关心pod地址
+        a. 用户访问服务
+        b. 请求到达了Service
+        c. Service 通过 selector 找到对应的 Pod
+        d. Service 通过负载均衡将请求转发给 Pod
+        e. Pod 返回结果给 Service
+        f. Service 返回结果给用户
+    Service 四种访问类型
+        a. ClusterIP: 集群内部访问
+            场景: 订单服务pod通过payment-service访问支付服务pod，订单服务pod不用关心支付服务pod的ip
+        b. NodePort: 节点端口，集群外部访问
+        c. LoadBalancer: 负载均衡，云提供商负载均衡器，外部访问
+        d. ExternalName: 外部名称，指向一个外部服务
+    Endpoints: Service对应的Pod的IP和端口，当pod增加或删除时，Endpoints会自动更新
+    Service 与 Deployment 的经典组合
+        service -> deployment -> ReplicaSet -> pod
+    问题排查顺序
+        a. Service 是否存在
+        b. Selector 是否匹配到
+        c. Endpoints 是否存在
+        d. Pod 是否正常
+
+
+    Ingress 统一网关入口 解决了Service太多ip
+    1. 一个公网入口，多个内网服务，根据规则转发请求，负责http与https流量管理
+        a. 同一个公网入口 https://www.example.com
+        b. 不同的请求调用不同的服务
+            /api/payment -> payment-service
+            /api/order   -> order-service
+    Ingress 与 Service 的关系
+    1. Ingress 把请求转发给 service
+    2. Service 再找到后面的 pod
+    Ingress Controller
+    1. ingress.yaml 只是一份配置
+    2. Ingress Controller 真正运行的反向代理，提供负载均衡，SSL 终止，HTTP 重写，请求路由等
+    Ingress 工作流
+    1. 用户发起 https://shop.com/api/order
+    2. 外部公网 load balancer 转发到 Ingress Controller
+    3. Controller 匹配规则路径 /api/order
+    4. 转发给后端的order-service
+    5. order-service 再找到对应的 pod
+    Ingress 常见问题
+    1. 外部访问404
+        kubectl describe ingress 确认host和path是否精确匹配
+
+
+
+    ConfigMap 配置与存储
+    1. k8s 用 ConfigMap 配置项管理，在启用pod时注入配置
+
+    Secret
+    1. 密码，密钥 单独加密存放
+
+    PVC 持久存储
+    1. pod被销毁后，相应的数据也不存在了， pvc数据卷挂载到pod，数据就保存到了外面，重建pod时再挂载回来，数据不丢失
+
+    Probe 探针
+    三种主要探针类型
+    1. startupProbe: 启动探针，容器启动后延迟多久开始探针，探针失败后多久重启
+    2. livenessProbe: 健康探针，容器健康检查，探针失败后多久重启
+    3. readinessProbe: 就绪探针，容器就绪检查，探针失败后多久从服务中移除
+        示例 应用正在取得数据库链接，readiness告诉Service还没有准备好
+
+    Resource 资源配置 限制pod的资源使用，避免拖垮整个node
+    Request 最低需要多少资源
+    Limit 最多需要多少资源
+    1. cpu: 100m 100毫核 1cpu = 1000m
+    2. memory: 128Mi 128兆字节 1Gi 1吉字节
+    示例 cpu 100m 100毫核 1cpu = 1000m limit
+    scheduler 只负责处理request
+    kubelet 只负责处理limit
+
+
+
+    Pod的创建过程，从yaml到运行 当执行命令 $ kubectl apply -f pod.yaml
+    1. yaml发送到 API Server
+    2. 把状态保存到 etcd 中
+    3. controller 发现要创建新的pod
+    4. 由 Scheduler 开始选择合适的 Node
+    5. 找到合适的机器后，把任务交给kubelet，调用容器运行时，启动容器
+    6. 最终一个pod由 yaml 到真正运行中的应用
+    yaml > api server -> etcd -> controller -> scheduler
+
+    Deployment 创建过程 从 yaml 到运行 当执行命令 $ kubectl apply -f deployment.yaml
+    1. yaml发送到 API Server
+    2. 保存deployment状态到 etcd 中
+    3. Controller manager 发现要创建新的deployment
+    4. 创建replica set
+    5. Replica set 发现要创建新的pod
+    6. 由 Scheduler 开始选择合适的 Node
+    7. 找到合适的机器后，把任务交给kubelet，调用容器运行时，启动容器
+    yaml -> api server -> etcd -> controller manager -> deployment -> replica set -> pod -> scheduler -> kubelet
+    ****
+    扩容: 设置 replicas 数量 再 kubectl apply -f deployment.yaml
+    发布策略:
+        a. Rolling Update 滚动更新
+        b. Recreate 先删除旧的pod，再创建新的pod，会有短暂的中断
+    健康管理:
+        a. startupProbe: 启动探针，容器启动后延迟多久开始探针，探针失败后多久重启
+        b. livenessProbe: 健康探针，容器健康检查，探针失败后多久重启
+        c. readinessProbe: 就绪探针，容器就绪检查，探针失败后多久从服务中移除
+
+

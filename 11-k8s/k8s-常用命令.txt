@@ -1,0 +1,36 @@
+
+
+    kubectl get pods            // 查看所有pod
+    kubectl describe pod x      // 查看某个pod详情
+    kubectl logs x              // 查看日志，排查
+    kubectl exec -it x  sh      // 进入容器内部
+    kubectl apply -f xxxx.yaml  // 创建更新资源
+
+
+    Deployment 常用命令
+    kubectl get deployment
+    kubectl describe deployment nginx # 查看 nginx 详情
+    kubectl get rs # 查看 ReplicaSet
+    kubectl get pods
+    kubectl scale deployment nginx --replicas=10 # 扩容
+    kubectl rollout status deployment nginx # 查看 rollout 状态，更新是否完成
+    kubectl rollout history deployment nginx # 查看 rollout 历史版本
+    kubectl rollout undo deployment nginx # 回滚到上一个版本
+    kubectl delete deployment nginx # 删除nginx这个deployment
+
+    Service 常用命令
+    kubectl get service
+    kubectl describe service nginx-service # 查看 nginx-service 详情
+    kubectl get endpoints nginx-service # 查看 endpoints pod的ip列表
+    kubectl get svc -A # 查看所有namespace下的service
+
+    Ingress 常用命令
+    kubectl get ingress # 查看当前集群 ingress 规则
+    kubectl describe ingress <name> # 查看  详情
+
+    // 核心
+    pod 调度的最小单位
+    service 稳定入口 接受请求分发到可用的pod
+    Deployment 声明副本数量和，自动维持与治愈
+    ConfigMap Secret PVC 配置项与持久存储
+    Yaml文件 + kubectl apply 声明式提交

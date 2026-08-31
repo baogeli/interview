@@ -1,0 +1,81 @@
+
+
+分库 = 多个数据库
+分表 = 一张大表拆分成多张小表
+
+表的数据量超过500w，或数据文件超过2g
+
+垂直分片：按业务维度拆分，把不同的表放到不同的库
+    原本库中有user,order两个表，拆分后user表放在库A，order表放在库B
+水平分片：按数据行维度拆分，把同一张表的数据分散到多个库/表
+    对user id % 2 = 1 奇数 存userA表 偶数 存userB表
+
+
+数据库的垂直分片：
+拆分前：所有表都在一个数据库 ecommerce 中
+ecommerce 数据库
+├── user（用户表）
+├── product（商品表）
+├── order（订单表）
+├── order_item（订单明细表）
+├── payment（支付表）
+├── cart（购物车表）
+├── comment（评论表）
+└── logistics（物流表）
+
+拆分后：按业务模块拆到不同库
+用户库 user_db              商品库 product_db           订单库 order_db
+├── user                    ├── product               ├── order
+├── user_address            ├── category              ├── order_item
+└── user_credit             ├── brand                 ├── payment
+
+评论库 comment_db          购物车库 cart_db
+├── comment                └── cart
+└── comment_image
+
+
+水数据库的平分片（按数据拆分）
+拆分前：order 表有 2 亿行数据
+order 表（2亿行）
+order_id    user_id    amount    create_time
+1           1001       299.00    2024-01-01
+2           1002       599.00    2024-01-01
+...
+200000000   9999       199.00    2024-06-01
+
+拆分后：按 user_id 取模分到 4 个库 (生成几个库都模几，这里是4)
+order_db_0                order_db_1
+├── order_0              ├── order_0
+│   user_id % 4 = 0      │   user_id % 4 = 1
+├── order_1              ├── order_1
+│   user_id % 4 = 0      │   user_id % 4 = 1
+
+order_db_2                order_db_3
+├── order_0              ├── order_0
+│   user_id % 4 = 2      │   user_id % 4 = 3
+├── order_1              ├── order_1
+│   user_id % 4 = 2      │   user_id % 4 = 3
+
+
+
+表的拆分：
+    垂直拆分 与 水平拆分
+    原始表 user ( 1亿行数据 10列字段 )
+
+    1. 垂直折分
+        a. 查询频率高的字段放在一个表中
+        b. 查询频率低，大字段(context列)
+
+    2. 水平拆分
+        保留全列数据，对user表取模分表
+        user_id % 4 = 0 存userA表
+        user_id % 4 = 1 存userB表
+        user_id % 4 = 2 存userC表
+        user_id % 4 = 3 存userD表
+
+分片策略
+    1. Hash取模  hash(key) % N
+        扩容困难，之前取模的N值无法改变，需要重新分片
+    2. 范围分片  range(start, end) 按id范围，或时间范围
+        数据可能不均匀
+

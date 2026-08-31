@@ -1,0 +1,78 @@
+
+1 _Gidle 还没有完成初使化
+2 _Gdead 完成初使化或已销毁
+3 _Grunnable 在执行队列，等待被执行
+4 _Grunning | _Gsyscal 系统调用，从用户态切换到内核态如 调用os.read读取文件   A.Grunning 快速路径  B.Grunnable
+            | _Gwaiting 协程处于  Grunnable
+5 _Gdead
+
+// 单独拉这个状态标注
+1. _Gwaiting
+    a. channel 等待造成的阻塞
+    b. time.sleep 由定时器到点触发
+    c. 网络I/O 而阻塞时，g会被注册到 NetPoller, 由系统来监听fd的状态变化
+    d. 互斥锁 Mutext
+2. _Gsyscal
+    a. 普通文件的I/O, os.read
+    b. p 被移交 hand off
+
+
+    | 阻塞类型 | G 的状态 | M 是否阻塞 | P 的行为 |
+    | --- | --- | --- | --- |
+    | ‌网络 I/O | _Gwaiting | 否，立即返回 | 直接取下一个 G 执行 |
+    | ‌阻塞系统调用‌ | _Gsyscall | 是，陷入内核等待 | 与 M 解绑，移交给其他 M |
+
+type g struct {
+	// ─── 栈管理相关字段 ───
+	// ─── 执行上下文与异常处理 ───
+	m              *m      // 当前G绑定的M（系统线程）指针
+	sched          gobuf   // 调度上下文快照，保存sp/pc/g等寄存器状态
+	// ─── 通用调度参数 ───
+	// ─── 抢占调度控制 ───
+	preempt       bool // 抢占信号标记，标识当前G收到抢占请求
+	preemptStop   bool // 抢占后转为_Gpreempted状态
+	// ─── GC相关字段 ───
+	// ─── 其他扩展字段 ───
+}
+
+type m struct {
+    g0  *g  schedule stack 调度协程，负责执行g之间的切换
+    // ...
+    tls  thread-local storage 本地线程存储 m.tls[0] 存储当前运行的g, g的结构体会
+    // ...
+}
+
+type p struct {
+    runqhead uint32  // 队列头部
+    runtail uint32   // 队列尾部
+    runq [256] guintptr // 本地goroutine队列，最大长度为256
+    runnext guintptr    // 下一个可执行的goroutine
+}
+
+// 全局队列
+type schedt struct {
+    lock mutex 锁
+    runq gQueue  全局队列
+    runsize int32 全局队列的容量
+}
+
+// 两种g的切换
+  1. g0 -> g
+    g0 调用 func gogo()汇编 切换到g并执行
+  2. g -> g0
+    当g 调用 func m_call 切换回g0, g0会再一次去寻找可执行的g
+    q1. 何时会触发func m_call
+        被执行 time.sleep 或 channel阻塞
+    q2. func m_call的的作用是什么
+        保留一份当前g的快照，方便未来被唤醒后从恢复执行
+        将当前g的状态改为 _GWaiting 并与m解绑
+        执行一次从g到g0的上下文切换
+
+
+// 几种调度机制
+  1. 主动调度 runtime.Gosched(), 调用m_call, _Grunning 切换成 _Grunable
+  2. 被动调度
+  3. 抢占调度
+  4. 工作窃取调度
+  5. netpoller
+  6. 全局队列兜底调度 调度循环每执行61次，会去全局队列里拉一定数量的g到本地队列中

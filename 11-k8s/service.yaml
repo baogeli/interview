@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+spec:
+  selector:
+    app: nginx          # 匹配 Pod 的 metadata.labels（来自 deployment 的 template）
+  ports:
+    - port: 80          # Service 自身暴露的端口（集群内部访问用）
+      targetPort: 80    # 转发到 Pod 内容器的端口（nginx 默认 80）
+  type: ClusterIP       # 默认类型，仅集群内可达；由 Ingress 对外暴露

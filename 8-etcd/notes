@@ -1,0 +1,145 @@
+
+etcd 服务治理：服务注册与服务发现
+
+目录结构
+    registry/instance.go    实例元数据模型 + key 规范
+    registry/client.go      客户端创建与探活
+    registry/register.go    服务注册（Lease + KeepAlive + 自愈 + 优雅下线）
+    registry/discovery.go   服务发现（全量 Get + 增量 Watch + 本地缓存）
+    main.go                 可运行 demo
+
+跑起来
+    docker run -d --name etcd-demo -p 2379:2379 \
+      -e ALLOW_NONE_AUTHENTICATION=yes \
+      -e ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379 bitnami/etcd:3.5
+
+    go run ./8-etcd
+
+    观察 etcd 里的数据：
+    docker exec etcd-demo etcdctl get /services --prefix
+    docker exec etcd-demo etcdctl watch /services --prefix
+
+
+一、为什么 etcd 适合做注册中心
+
+    1. Raft 强一致(CP)
+       所有节点看到的注册信息一致，不会出现「A 节点说实例在，B 节点说不在」。
+       代价是分区时少数派不可写，可用性弱于 Nacos/Eureka(AP)。
+       所以消费端一定要有本地缓存兜底，etcd 挂了服务之间仍能互相调用。
+
+    2. Lease 租约
+       天然的健康检查语义：活着就续约，死了就自动过期删除。
+       比自己写心跳表 + 定时扫描简单得多。
+
+    3. Watch 增量推送
+       基于 MVCC 的 revision 机制，可以从任意历史版本开始订阅，不丢事件。
+       对比轮询：轮询有延迟且压力大。
+
+    4. 前缀查询
+       etcd v3 的 key 是扁平有序字节串，WithPrefix() 本质是
+       [prefix, prefixEnd) 的范围操作，天然适合树形 key 设计。
+
+
+二、key 设计
+
+    /services/{服务名}/{实例ID}   ->   实例元数据 JSON
+
+    坑：前缀结尾必须补 "/"
+        监听 /services/user     会同时命中 /services/user-admin
+        监听 /services/user/    才是精确的服务隔离
+
+
+三、服务注册的四个关键点
+
+    1) 必须用租约，不能用永久 key
+       Grant(ttl) 拿租约 -> Put(key, val, WithLease(id))
+       kill -9 / 宕机 / 网络断开时无人续约，TTL 到期 etcd 自动删 key。
+       否则永久 key 会留下大量僵尸节点，流量打过去全是超时。
+
+    2) KeepAlive 返回的 channel 必须起协程消费   ★最容易踩的坑★
+       ch, _ := cli.KeepAlive(ctx, leaseID)
+       这是唯一能感知「租约已经死了」的通道：
+       客户端一旦放弃这个租约（服务端回 TTL<=0，或一个 TTL 周期内
+       收不到任何续约响应，被 deadlineLoop 判死），就会 close(ch)。
+       不消费就永远发现不了自己已经被摘出服务列表。
+
+       补充（v3.5.17 源码 clientv3/lease.go recvKeepAlive）：
+       响应是非阻塞投递的，channel（缓冲 16）满了只会丢弃响应并打一条
+       "lease keepalive response queue is full" 警告，续约本身不受影响。
+       但旧版本客户端有过队列满导致续约异常的历史问题，
+       面试时可以答「必须消费，且要处理 channel 关闭」，这两点在任何版本都成立。
+
+    3) KeepAlive 的 ctx 不能用调用方传进来的短 ctx
+       ctx 一超时/取消，续约就停了。要用跟随组件生命周期的 ctx。
+
+    4) channel 被关闭 = 客户端已放弃该租约，必须重新注册（自愈）
+       网络分区恢复后租约往往已经过期，光重连没用，
+       要重新 Grant + Put，否则实例再也回不到注册中心。
+       重试要带指数退避，避免 etcd 恢复瞬间被雪崩式重注册打垮。
+
+    优雅下线用 Revoke 不用 Delete
+       Revoke  一次调用清掉该租约下所有 key，立即生效
+       Delete  只删 key，租约残留
+       什么都不做 直接退出，key 要等最长 TTL 秒才消失，
+                这段时间流量还在打向已停实例
+
+    TTL 怎么选
+       太小(1~2s)：网络轻微抖动就误摘活着的实例
+       太大(60s+)：故障感知慢，流量长时间打到死实例
+       经验值 10~30s，配合客户端重试 + 熔断
+
+
+四、服务发现的四个关键点
+
+    1) 全量 + 增量，且 revision 必须衔接   ★最经典的考点★
+       resp := cli.Get(prefix, WithPrefix())     // 全量快照
+       rev  := resp.Header.Revision
+       cli.Watch(prefix, WithPrefix(), WithRev(rev+1))   // 从快照之后开始订阅
+
+       如果不带 WithRev 直接 Watch，Get 和 Watch 之间那个时间窗内发生的变更
+       就永久丢失了 —— 表现为「实例已经下线但消费端列表里一直挂着」。
+
+    2) DELETE 事件里 Kv.Value 是空的
+       想知道下线的是哪个实例（打日志、做告警），必须加 WithPrevKV()，
+       从 ev.PrevKv.Value 里读旧值。
+
+    3) 本地缓存 + RWMutex，读不打 etcd
+       etcd 是 CP 系统，承载能力有限，绝不能每次 RPC 前都 Get 一次。
+       缓存的额外收益：etcd 全挂时消费端用上一份列表降级运行。
+
+    4) Watch 通道会关闭，要能重建
+       常见原因：网络断开、
+                 etcdserver: mvcc: required revision has been compacted
+                 （要续的 revision 被压缩掉了）
+       处理方式统一为：重新做一次全量 Get，拿新 revision 再续上 Watch。
+
+    脏数据要跳过而不是中断
+       某个 key 的 JSON 解析失败，只跳过这一条并告警，
+       不能让一条脏数据把整个服务列表拖垮。
+
+
+五、常见追问
+
+    Q: etcd 和 ZooKeeper / Nacos / Consul 的区别？
+    A: etcd/ZK/Consul 都是 CP，Nacos 支持 AP+CP 可切换。
+       ZK 用临时节点(session)，etcd 用租约(lease)，语义类似但 etcd 的
+       租约可以被多个 key 共享，且 HTTP/gRPC 接口更友好。
+       Nacos 自带控制台和配置中心，开箱即用程度最高。
+
+    Q: 服务列表突然全空了怎么办？
+    A: 必须做保护：新列表为空时保留旧列表（防止 etcd 抖动导致全量摘除），
+       同时上报告警。这叫「推空保护」，Nacos 也有同名机制。
+
+    Q: 一个实例注册多个协议端口怎么办？
+    A: 同一个 lease 绑多个 key（如 /services/x/grpc/id、/services/x/http/id），
+       Revoke 一次全部下线。
+
+    Q: Watch 的惊群问题？
+    A: etcd 服务端对同一个 key range 的 watcher 会做合并广播，
+       客户端侧多个 Watch 也会复用同一条 gRPC 流(watch stream 多路复用)，
+       所以单进程内不必担心；真正要注意的是 watcher 数量过多时的内存开销。
+
+    Q: 下一步还能做什么（本 demo 未覆盖）？
+    A: 负载均衡（轮询/加权/一致性哈希）、配置中心（Watch 配置热更新）、
+       分布式锁与 Leader 选举（concurrency.Mutex / concurrency.Election）、
+       gRPC resolver 集成（实现 resolver.Builder，直接用 etcd:/// 地址）。

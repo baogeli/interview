@@ -1,0 +1,32 @@
+
+服务器部署Canal需要Java环境
+
+优点
+1. 代码零侵入
+2. 基于binlog实现
+3. 接入MQ方便
+
+Canal 四步工作流
+1. 伪装从库 发送 COM_REGISTER_SLAVE 向MySQL主库注册自己
+2. 请求日志 发送 COM_BINLOG_DUMP 指定位置开始发送
+3. 解析变更 解析binlog二进制流数据，生成变更后的行数据
+4. 投递下游 把结构化数据投递到消费端
+
+Canal 三大组件
+1. Canal Server 监听MySQL的binlog
+2. Canal Client 消费binlog
+3. Canal Adapter 转换数据(redis格式、kafka格式)
+
+Canal 部署过程
+1. 配置MySQL 开启binlog
+    binlog的三种模式
+    a. STATEMENT
+        Binlog 里记录的内容：UPDATE users SET status = 1 WHERE age > 18;
+        风险: 如果使用了函数 NOW() UUID() 等函数，从库和主库的数据可能不一致
+    b. ROW
+        Binlog 里记录的内容: 为变更的数据
+            第1行：(id=1, age=20, status=0) → (id=1, age=20, status=1)
+            第2行：(id=5, age=25, status=0) → (id=5, age=25, status=1)
+        风险：日志量会急剧膨胀。
+    c. MIXED
+

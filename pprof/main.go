@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 	"net/http"
+	_ "net/http/pprof" // 关键：仅为了注册路由
 	"runtime"
 	"sync"
 	"time"
-	_ "net/http/pprof" // 关键：仅为了注册路由
 )
 
 func main() {

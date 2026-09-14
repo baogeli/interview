@@ -1,0 +1,12 @@
+
+slice
+    data uint ptr 指向底层数组的指针
+    len int  长度
+    cap int  容量
+
+slice 长度为24字节 本身不持有数据
+    data 指针 8字节
+    len  8字节
+    cap  8字节
+
+slice len >= cap 时会扩容, 分配了更大的内存，返回一个新的slice, 原slice值不变
